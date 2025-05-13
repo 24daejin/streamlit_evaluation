@@ -13,8 +13,8 @@
 
 1. **저장소 복제**:
    ```bash
-   git clone https://github.com/yourusername/climate-storyboard-tool.git
-   cd climate-storyboard-tool
+   git clone https://github.com/24daejin/streamlit_evaluation.git
+   cd streamlit_evaluation
    ```
 
 2. **가상환경 생성 및 활성화**:
