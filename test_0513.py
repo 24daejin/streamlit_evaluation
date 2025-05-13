@@ -520,7 +520,7 @@ if st.query_params.get("admin", "false") == "true":
     st.metric("총 API 호출 횟수", st.session_state.api_call_count)
 
     # 탭 생성
-    admin_tab1, admin_tab2, admin_tab3 = st.tabs(["학생 목록", "대화 내용", "데이터 분석"])
+    admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(["학생 목록", "대화 내용", "데이터 분석", "백업 다운로드"])
 
     with admin_tab1:
         st.subheader("등록된 학생 목록")
@@ -776,3 +776,37 @@ if st.query_params.get("admin", "false") == "true":
                 st.info("분석할 대화 데이터가 없습니다.")
         except Exception as e:
             st.error(f"데이터 분석 중 오류 발생: {str(e)}")
+            
+    with admin_tab4:
+        st.subheader("전체 데이터 백업")
+        
+        if st.button("모든 데이터 ZIP으로 다운로드"):
+            import zipfile
+            import io
+            
+            # 메모리에 ZIP 파일 생성
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # 학생 정보 파일 추가
+                if os.path.exists(STUDENTS_FILE):
+                    with open(STUDENTS_FILE, 'r', encoding='utf-8') as f:
+                        zipf.writestr("students.json", f.read())
+                
+                # 대화 파일 추가
+                for filename in os.listdir(CONVERSATIONS_DIR):
+                    if filename.endswith('.json'):
+                        file_path = os.path.join(CONVERSATIONS_DIR, filename)
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            zipf.writestr(f"conversations/{filename}", f.read())
+            
+            # 다운로드 버튼 표시
+            zip_buffer.seek(0)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            st.download_button(
+                label="데이터 백업 다운로드",
+                data=zip_buffer,
+                file_name=f"storyboard_data_backup_{timestamp}.zip",
+                mime="application/zip"
+            )
+            
+            st.success("데이터가 성공적으로 압축되었습니다. 다운로드 버튼을 클릭하여 백업 파일을 저장하세요.")
