@@ -18,6 +18,70 @@ st.set_page_config(
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 
+# 2. 환경 변수에 없으면 Streamlit Secrets에서 가져오기
+if not OPENAI_API_KEY:
+    try:
+        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    except Exception as e:
+        st.error("OpenAI API 키가 설정되지 않았습니다. Streamlit Cloud의 Secrets에서 'OPENAI_API_KEY'를 설정해주세요.")
+        st.stop()
+
+# 3. API 키 유효성 검사
+if not OPENAI_API_KEY:
+    st.error("OpenAI API 키가 설정되지 않았습니다. Streamlit Cloud의 Secrets에서 'OPENAI_API_KEY'를 설정해주세요.")
+    st.stop()
+    
+# 학생별 최대 API 호출 횟수 설정
+MAX_API_CALLS_PER_STUDENT = 50  # 학생별 최대 API 호출 횟수
+
+# 학생별 API 호출 횟수 추적
+if "student_api_calls" not in st.session_state:
+    st.session_state.student_api_calls = {}
+
+# GPT API 호출 함수 (모델 선택 가능)
+def get_gpt_response(messages, use_gpt4=False):
+    student_id = st.session_state.student_id
+    
+    # 학생별 API 호출 횟수 초기화
+    if student_id not in st.session_state.student_api_calls:
+        st.session_state.student_api_calls[student_id] = 0
+    
+    # API 호출 횟수 제한 확인
+    if st.session_state.student_api_calls[student_id] >= MAX_API_CALLS_PER_STUDENT:
+        return "API 호출 횟수가 제한에 도달했습니다. 선생님에게 문의해주세요."
+    
+    # 간단한 캐싱을 위한 키 생성 (사용자 메시지만 고려)
+    cache_key = str([msg for msg in messages if msg["role"] == "user"]) + str(use_gpt4)
+    
+    # 캐시된 응답이 있는지 확인
+    if cache_key in st.session_state.response_cache:
+        return st.session_state.response_cache[cache_key]
+    
+    try:
+        # API 호출 카운터 증가
+        st.session_state.api_call_count += 1
+        st.session_state.student_api_calls[student_id] += 1
+        
+        # 모델 선택
+        model = FEEDBACK_MODEL if use_gpt4 else DEFAULT_MODEL
+        
+        # API 호출
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.7,
+        )
+        
+        response_text = response.choices[0].message.content
+        
+        # 응답 캐싱
+        st.session_state.response_cache[cache_key] = response_text
+        
+        return response_text
+    except Exception as e:
+        st.error(f"GPT 응답 생성 중 오류가 발생했습니다: {str(e)}")
+        return "죄송합니다, 응답을 생성하는 중에 오류가 발생했습니다. 다시 시도해 주세요."
+
 # 데이터 저장 경로 설정
 DATA_DIR = "data"
 CONVERSATIONS_DIR = os.path.join(DATA_DIR, "conversations")
