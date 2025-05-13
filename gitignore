@@ -1,0 +1,25 @@
+# 환경 및 가상 환경
+.env
+venv/
+env/
+.venv/
+ENV/
+
+# 비밀 정보
+.streamlit/secrets.toml
+
+# 캐시 및 로그
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints
+.pytest_cache/
+logs/
+
+# 데이터 파일 (필요에 따라 조정)
+*.csv
+*.json
+
+# OS 파일
+.DS_Store
+Thumbs.db
