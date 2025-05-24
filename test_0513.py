@@ -472,7 +472,7 @@ if not st.session_state.student_info_submitted:
         with col2:
             student_id = st.text_input("학번")
 
-        submitted = st.form_submit_button("제출")
+        submitted = st.form_submit_button("로그인")
         if submitted and student_name and student_id:
             st.session_state.student_name = student_name
             st.session_state.student_id = student_id
