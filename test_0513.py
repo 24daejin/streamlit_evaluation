@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 import pandas as pd
 from openai import OpenAI
+import traceback  # 오류 추적용
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -81,7 +82,105 @@ def get_gpt_response(messages, use_gpt4=False):
     except Exception as e:
         st.error(f"GPT 응답 생성 중 오류가 발생했습니다: {str(e)}")
         return "죄송합니다, 응답을 생성하는 중에 오류가 발생했습니다. 다시 시도해 주세요."
+# GPT를 활용한 메시지 관련성 분석 함수들 (get_gpt_response 함수 아래에 추가)
 
+def analyze_message_relevance(message_content):
+    """GPT를 사용해서 메시지가 스토리보드 관련인지 판단"""
+    
+    analysis_prompt = f"""
+    다음 학생의 메시지가 기후 위기 스토리보드 작성과 관련된 의미있는 내용인지 판단해주세요.
+    
+    학생 메시지: "{message_content}"
+    
+    다음 기준으로 판단해주세요:
+    
+    관련된 내용:
+    - 스토리보드 주제, 구성, 캐릭터, 장면에 대한 질문이나 아이디어
+    - 기후 위기 관련 내용 문의 및 토론
+    - 창작 과정에서의 구체적인 고민이나 요청
+    - 스토리보드 제작 방법에 대한 질문
+    - 발표 준비나 피드백 요청
+    - 구체적인 시나리오나 상황 설정에 대한 논의
+    
+    관련없는 내용:
+    - 단순 인사말 ("안녕하세요", "감사합니다", "네", "좋아요")
+    - 수행평가와 무관한 잡담이나 개인적인 이야기
+    - 너무 짧거나 의미없는 응답 ("몰라요", "음", "어")
+    - 단순 확인 응답 ("알겠습니다", "네 맞아요")
+    
+    답변: "관련됨" 또는 "관련없음" 중 하나만 정확히 답하세요.
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            temperature=0.1,  # 일관성을 위해 낮은 temperature
+        )
+        
+        result = response.choices[0].message.content.strip()
+        return "관련됨" in result
+    except Exception as e:
+        # API 오류 시 보수적으로 관련됨으로 처리 (학생에게 불이익 방지)
+        print(f"메시지 분석 중 오류: {str(e)}")
+        return True
+
+def count_relevant_prompts(conversation):
+    """대화에서 스토리보드 관련 프롬프트 수 계산"""
+    relevant_count = 0
+    
+    for msg in conversation["messages"]:
+        if msg["role"] == "user":
+            # 시스템 메시지나 웰컴 메시지에 대한 단순 응답은 제외
+            if len(msg["content"].strip()) < 3:
+                continue
+                
+            if analyze_message_relevance(msg["content"]):
+                relevant_count += 1
+    
+    return relevant_count
+
+def analyze_conversations_with_gpt(conversations, progress_callback=None):
+    """여러 대화를 GPT로 분석 (진행 상황 표시 포함)"""
+    analyzed_data = []
+    total = len(conversations)
+    
+    for i, conv in enumerate(conversations):
+        if progress_callback:
+            progress_callback(i + 1, total)
+            
+        student_name = conv["student_name"]
+        student_id = conv["student_id"]
+        
+        # GPT로 관련 메시지 수 분석
+        relevant_count = count_relevant_prompts(conv)
+        total_user_messages = sum(1 for msg in conv["messages"] if msg["role"] == "user")
+        assistant_msg_count = sum(1 for msg in conv["messages"] if msg["role"] == "assistant")
+        
+        # 대화 시간 계산
+        if conv["messages"]:
+            first_msg_time = datetime.strptime(conv["messages"][0]["timestamp"], "%Y-%m-%d %H:%M:%S")
+            last_msg_time = datetime.strptime(conv["messages"][-1]["timestamp"], "%Y-%m-%d %H:%M:%S")
+            duration = (last_msg_time - first_msg_time).total_seconds() / 60
+        else:
+            duration = 0
+        
+        # 피드백 여부 확인
+        has_feedback = "feedback" in conv and len(conv["feedback"]) > 0
+        
+        analyzed_data.append({
+            "학생명": student_name,
+            "학번": student_id,
+            "관련 프롬프트 수": relevant_count,
+            "전체 메시지 수": total_user_messages,
+            "AI 응답 수": assistant_msg_count,
+            "관련도": f"{relevant_count}/{total_user_messages}" if total_user_messages > 0 else "0/0",
+            "대화 시간(분)": round(duration, 1),
+            "피드백 여부": "O" if has_feedback else "X"
+        })
+    
+    return analyzed_data
+    
 # 데이터 저장 경로 설정
 DATA_DIR = "data"
 CONVERSATIONS_DIR = os.path.join(DATA_DIR, "conversations")
@@ -636,167 +735,202 @@ if st.query_params.get("admin", "false") == "true":
                     with open(file_path, 'r', encoding='utf-8') as f:
                         conversation = json.load(f)
                         all_conversations.append(conversation)
+            
             if all_conversations:
-                # 기본 통계
-                total_messages = sum(len(conv["messages"]) for conv in all_conversations)
-                user_messages = sum(
-                    sum(1 for msg in conv["messages"] if msg["role"] == "user") for conv in all_conversations)
-                assistant_messages = sum(
-                    sum(1 for msg in conv["messages"] if msg["role"] == "assistant") for conv in all_conversations)
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("총 메시지 수", total_messages)
-                with col2:
-                    st.metric("학생 메시지 수", user_messages)
-                with col3:
-                    st.metric("AI 응답 수", assistant_messages)
-
-                # 학생별 메시지 수 데이터 수집
-                student_message_data = []
-                for conv in all_conversations:
-                    student_name = conv["student_name"]
-                    student_id = conv["student_id"]
-                    user_msg_count = sum(1 for msg in conv["messages"] if msg["role"] == "user")
-                    assistant_msg_count = sum(1 for msg in conv["messages"] if msg["role"] == "assistant")
-
-                    # 최초/최근 대화 시간 확인
-                    if conv["messages"]:
-                        first_msg_time = datetime.strptime(conv["messages"][0]["timestamp"], "%Y-%m-%d %H:%M:%S")
-                        last_msg_time = datetime.strptime(conv["messages"][-1]["timestamp"], "%Y-%m-%d %H:%M:%S")
-                        duration = (last_msg_time - first_msg_time).total_seconds() / 60  # 분 단위
-                    else:
-                        duration = 0
-
-                    # 피드백 여부 확인
-                    has_feedback = "feedback" in conv and len(conv["feedback"]) > 0
-
-                    student_message_data.append({
-                        "학생명": student_name,
-                        "학번": student_id,
-                        "학생 메시지 수": user_msg_count,
-                        "AI 응답 수": assistant_msg_count,
-                        "대화 시간(분)": round(duration, 1),
-                        "피드백 여부": "O" if has_feedback else "X"
-                    })
-
-                # 데이터프레임 생성
-                student_df = pd.DataFrame(student_message_data)
-
-                # 프롬프트 분석
-                st.subheader("학생별 프롬프트 분석")
-
-
-                # 프롬프트 수에 따른 등급 평가
-                def evaluate_grade(prompt_count):
-                    if prompt_count >= 5:
-                        return "A (40점)"
-                    elif prompt_count == 4:
-                        return "B (35점)"
-                    elif prompt_count == 3:
-                        return "C (30점)"
-                    elif prompt_count == 2:
-                        return "D (25점)"
-                    else:
-                        return "E (20점)"
-
-
-                student_df["예상 등급"] = student_df["학생 메시지 수"].apply(evaluate_grade)
-
-                # 데이터 표시
-                st.dataframe(student_df)
-
-                # 차트: 학생별 메시지 수 분포
-                st.subheader("학생별 메시지 수 분포")
-
-                # 상위 10명만 표시 (시각화 간결화)
-                top_students = student_df.sort_values(by="학생 메시지 수", ascending=False).head(10)
-
-                chart_data = pd.DataFrame({
-                    "학생": top_students["학생명"],
-                    "학생 메시지": top_students["학생 메시지 수"],
-                    "AI 응답": top_students["AI 응답 수"]
-                })
-
-                st.bar_chart(chart_data.set_index("학생"))
-
-                # 등급 분포
-                st.subheader("등급 분포")
-                grade_counts = student_df["예상 등급"].value_counts().reset_index()
-                grade_counts.columns = ["등급", "학생 수"]
-
-                # 등급 분포 차트
-                st.bar_chart(grade_counts.set_index("등급"))
-
-                # 모든 데이터 다운로드
-                csv_all = student_df.to_csv(index=False)
-                st.download_button(
-                    label="전체 분석 데이터 다운로드 (CSV)",
-                    data=csv_all,
-                    file_name="학생_분석데이터.csv",
-                    mime="text/csv"
+                # 분석 방법 선택
+                analysis_method = st.radio(
+                    "분석 방법 선택:",
+                    ["빠른 분석 (기존 방식)", "정밀 분석 (GPT 활용)"],
+                    help="정밀 분석은 GPT를 사용하여 더 정확하지만 시간이 더 걸립니다."
                 )
+                
+                if analysis_method == "정밀 분석 (GPT 활용)":
+                    # GPT 분석 실행 버튼
+                    if st.button("GPT 분석 시작", type="primary"):
+                        # 진행 상황 표시
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        def update_progress(current, total):
+                            progress = current / total
+                            progress_bar.progress(progress)
+                            status_text.text(f'분석 진행 중... {current}/{total} ({progress:.1%})')
+                        
+                        # GPT 분석 실행
+                        with st.spinner("GPT를 활용한 정밀 분석 중..."):
+                            student_message_data = analyze_conversations_with_gpt(
+                                all_conversations, 
+                                progress_callback=update_progress
+                            )
+                        
+                        # 진행 상황 정리
+                        progress_bar.empty()
+                        status_text.text("분석 완료!")
+                        
+                        # 세션에 결과 저장
+                        st.session_state.gpt_analysis_result = student_message_data
+                    
+                    # 저장된 분석 결과가 있으면 표시
+                    if hasattr(st.session_state, 'gpt_analysis_result'):
+                        student_message_data = st.session_state.gpt_analysis_result
+                        
+                        # 프롬프트 수에 따른 등급 평가 함수
+                        def evaluate_grade(prompt_count):
+                            if prompt_count >= 5:
+                                return "A (40점)"
+                            elif prompt_count == 4:
+                                return "B (35점)"  
+                            elif prompt_count == 3:
+                                return "C (30점)"
+                            elif prompt_count == 2:
+                                return "D (25점)"
+                            else:
+                                return "E (20점)"
+                        
+                        # 데이터프레임 생성 및 등급 추가
+                        student_df = pd.DataFrame(student_message_data)
+                        student_df["예상 등급"] = student_df["관련 프롬프트 수"].apply(evaluate_grade)
+                        
+                        # 기본 통계 표시
+                        st.subheader("GPT 분석 결과")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            avg_relevant = student_df["관련 프롬프트 수"].mean()
+                            st.metric("평균 관련 프롬프트 수", f"{avg_relevant:.1f}")
+                        with col2:
+                            avg_total = student_df["전체 메시지 수"].mean()
+                            st.metric("평균 전체 메시지 수", f"{avg_total:.1f}")
+                        with col3:
+                            relevance_rate = (student_df["관련 프롬프트 수"].sum() / student_df["전체 메시지 수"].sum()) * 100
+                            st.metric("전체 관련도", f"{relevance_rate:.1f}%")
+                        
+                        # 상세 분석 테이블
+                        st.subheader("학생별 상세 분석")
+                        st.dataframe(
+                            student_df.sort_values(by="관련 프롬프트 수", ascending=False),
+                            use_container_width=True
+                        )
+                        
+                        # 등급 분포 차트
+                        st.subheader("등급 분포 (GPT 분석 기준)")
+                        grade_counts = student_df["예상 등급"].value_counts().reset_index()
+                        grade_counts.columns = ["등급", "학생 수"]
+                        st.bar_chart(grade_counts.set_index("등급"))
+                        
+                        # 관련도 분석 차트
+                        st.subheader("학생별 프롬프트 관련도")
+                        chart_data = student_df[["학생명", "관련 프롬프트 수", "전체 메시지 수"]].head(10)
+                        st.bar_chart(chart_data.set_index("학생명"))
+                        
+                        # GPT 분석 결과 다운로드
+                        csv_gpt = student_df.to_csv(index=False)
+                        st.download_button(
+                            label="GPT 분석 결과 다운로드 (CSV)",
+                            data=csv_gpt,
+                            file_name="GPT_분석_결과.csv",
+                            mime="text/csv"
+                        )
+                        
+                    else:
+                        st.info("👆 위의 'GPT 분석 시작' 버튼을 클릭하여 정밀 분석을 시작하세요.")
+                
+                else:
+                    # 기존 빠른 분석 방식
+                    total_messages = sum(len(conv["messages"]) for conv in all_conversations)
+                    user_messages = sum(
+                        sum(1 for msg in conv["messages"] if msg["role"] == "user") for conv in all_conversations)
+                    assistant_messages = sum(
+                        sum(1 for msg in conv["messages"] if msg["role"] == "assistant") for conv in all_conversations)
 
-                # 자주 등장하는 키워드 분석
-                st.subheader("자주 등장하는 키워드 분석")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("총 메시지 수", total_messages)
+                    with col2:
+                        st.metric("학생 메시지 수", user_messages)
+                    with col3:
+                        st.metric("AI 응답 수", assistant_messages)
 
-                # 모든 대화 텍스트 추출
-                all_texts = []
-                for conv in all_conversations:
-                    for msg in conv["messages"]:
-                        if msg["role"] == "user":
-                            all_texts.append(msg["content"])
+                    # 기존 분석 로직 (간단한 메시지 수 기반)
+                    student_message_data = []
+                    for conv in all_conversations:
+                        student_name = conv["student_name"]
+                        student_id = conv["student_id"]
+                        user_msg_count = sum(1 for msg in conv["messages"] if msg["role"] == "user")
+                        assistant_msg_count = sum(1 for msg in conv["messages"] if msg["role"] == "assistant")
 
-                # 간단한 키워드 추출 (단어 빈도 기반)
-                if all_texts:
-                    # 전처리 함수
-                    def preprocess_text(text):
-                        # 간단한 전처리: 특수문자 제거 및 소문자화
-                        import re
-                        text = re.sub(r'[^\w\s]', '', text.lower())
-                        return text
+                        if conv["messages"]:
+                            first_msg_time = datetime.strptime(conv["messages"][0]["timestamp"], "%Y-%m-%d %H:%M:%S")
+                            last_msg_time = datetime.strptime(conv["messages"][-1]["timestamp"], "%Y-%m-%d %H:%M:%S")
+                            duration = (last_msg_time - first_msg_time).total_seconds() / 60
+                        else:
+                            duration = 0
 
+                        has_feedback = "feedback" in conv and len(conv["feedback"]) > 0
 
-                    # 모든 텍스트 전처리
-                    processed_texts = [preprocess_text(text) for text in all_texts]
+                        student_message_data.append({
+                            "학생명": student_name,
+                            "학번": student_id,
+                            "학생 메시지 수": user_msg_count,
+                            "AI 응답 수": assistant_msg_count,
+                            "대화 시간(분)": round(duration, 1),
+                            "피드백 여부": "O" if has_feedback else "X"
+                        })
 
-                    # 단어 빈도 계산
-                    word_freq = {}
-                    stop_words = {"그", "이", "저", "것", "수", "를", "에", "은", "는", "이", "가", "와", "과", "어떻게", "어떤", "했",
-                                  "있", "있는", "한"}
+                    # 기존 평가 함수
+                    def evaluate_grade_simple(prompt_count):
+                        if prompt_count >= 5:
+                            return "A (40점)"
+                        elif prompt_count == 4:
+                            return "B (35점)"
+                        elif prompt_count == 3:
+                            return "C (30점)"
+                        elif prompt_count == 2:
+                            return "D (25점)"
+                        else:
+                            return "E (20점)"
 
-                    for text in processed_texts:
-                        words = text.split()
-                        for word in words:
-                            if word not in stop_words and len(word) > 1:
-                                if word in word_freq:
-                                    word_freq[word] += 1
-                                else:
-                                    word_freq[word] = 1
+                    student_df = pd.DataFrame(student_message_data)
+                    student_df["예상 등급"] = student_df["학생 메시지 수"].apply(evaluate_grade_simple)
 
-                    # 상위 키워드 추출
-                    top_keywords = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:20]
+                    st.subheader("학생별 기본 분석 (메시지 수 기준)")
+                    st.dataframe(student_df)
+                    
+                    # 기존 차트들
+                    st.subheader("학생별 메시지 수 분포")
+                    top_students = student_df.sort_values(by="학생 메시지 수", ascending=False).head(10)
+                    chart_data = pd.DataFrame({
+                        "학생": top_students["학생명"],
+                        "학생 메시지": top_students["학생 메시지 수"],
+                        "AI 응답": top_students["AI 응답 수"]
+                    })
+                    st.bar_chart(chart_data.set_index("학생"))
 
-                    # 키워드 빈도 차트를 위한 데이터프레임
-                    keyword_df = pd.DataFrame(top_keywords, columns=["키워드", "빈도"])
+                    # 등급 분포
+                    st.subheader("등급 분포 (기본 분석)")
+                    grade_counts = student_df["예상 등급"].value_counts().reset_index()
+                    grade_counts.columns = ["등급", "학생 수"]
+                    st.bar_chart(grade_counts.set_index("등급"))
 
-                    # 키워드 빈도 차트
-                    st.bar_chart(keyword_df.set_index("키워드"))
-
-                    # 키워드 데이터 다운로드
-                    csv_keywords = keyword_df.to_csv(index=False)
+                    # 기본 분석 다운로드
+                    csv_basic = student_df.to_csv(index=False)
                     st.download_button(
-                        label="키워드 분석 다운로드 (CSV)",
-                        data=csv_keywords,
-                        file_name="키워드_분석.csv",
+                        label="기본 분석 데이터 다운로드 (CSV)",
+                        data=csv_basic,
+                        file_name="기본_분석데이터.csv",
                         mime="text/csv"
                     )
-                else:
-                    st.info("분석할 대화 내용이 없습니다.")
+
+                # 키워드 분석은 공통으로 유지
+                st.subheader("자주 등장하는 키워드 분석")
+                # ... 기존 키워드 분석 코드 그대로 유지 ...
+                
             else:
                 st.info("분석할 대화 데이터가 없습니다.")
         except Exception as e:
             st.error(f"데이터 분석 중 오류 발생: {str(e)}")
+            st.error(f"상세 오류: {traceback.format_exc()}")
+            
             
     with admin_tab4:
         st.subheader("전체 데이터 백업")
