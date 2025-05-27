@@ -198,8 +198,8 @@ if not os.path.exists(STUDENTS_FILE):
 # OpenAI 클라이언트 초기화 (한 번만 생성)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 모델 설정 (GPT-3.5-turbo 또는 GPT-4)
-DEFAULT_MODEL = "gpt-3.5-turbo"  # 기본 모델
+# 모델 설정 (GPT-04-mini 또는 GPT-4o)
+DEFAULT_MODEL = "o4-mini"  # 기본 모델
 FEEDBACK_MODEL = "gpt-4o"  # 피드백에 사용할 모델
 
 # 세션 ID 생성 (처음 앱 실행 시 한 번만)
