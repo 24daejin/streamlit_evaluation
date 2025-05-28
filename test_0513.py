@@ -114,8 +114,7 @@ def analyze_message_relevance(message_content):
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": analysis_prompt}],
-            temperature=0.1,  # 일관성을 위해 낮은 temperature
+            messages=[{"role": "user", "content": analysis_prompt}]
         )
         
         result = response.choices[0].message.content.strip()
@@ -199,7 +198,7 @@ if not os.path.exists(STUDENTS_FILE):
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 모델 설정 (GPT-04-mini 또는 GPT-4o)
-DEFAULT_MODEL = "gpt-3.5-turbo"  # 기본 모델
+DEFAULT_MODEL = "gpt-4o-mini"  # 기본 모델
 FEEDBACK_MODEL = "gpt-4"  # 피드백에 사용할 모델
 
 # 세션 ID 생성 (처음 앱 실행 시 한 번만)
@@ -394,6 +393,22 @@ def get_gpt_response(messages, use_gpt4=False):
     # 캐시된 응답이 있는지 확인
     if cache_key in st.session_state.response_cache:
         return st.session_state.response_cache[cache_key]
+    try:
+    # 먼저 temperature와 함께 시도
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.7,
+    )
+    except Exception as temp_error:
+    # temperature 오류인 경우 제거하고 재시도
+    if "temperature" in str(temp_error).lower():
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+        )
+    else:
+        raise temp_error
 
     try:
         # API 호출 카운터 증가
