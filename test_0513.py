@@ -201,7 +201,7 @@ if not os.path.exists(STUDENTS_FILE):
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 모델 설정 (GPT-04-mini 또는 GPT-4o)
-DEFAULT_MODEL = "gpt-o4-mini"  # 기본 모델
+DEFAULT_MODEL = "gpt-4o-mini"  # 기본 모델
 FEEDBACK_MODEL = "gpt-4o"  # 피드백에 사용할 모델
 
 # 세션 ID 생성 (처음 앱 실행 시 한 번만)
@@ -405,11 +405,15 @@ def get_gpt_response(messages, use_gpt4=False):
         model = FEEDBACK_MODEL if use_gpt4 else DEFAULT_MODEL
 
         # API 호출
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-        )
+        api_params = {
+        "model": model,
+        "messages": messages
+        }
+        # o1 모델이 아닌 경우에만 temperature 추가
+        if not model.startswith("o1"):
+            api_params["temperature"] = 0.7
+        
+        response = client.chat.completions.create(**api_params)
 
         response_text = response.choices[0].message.content
 
