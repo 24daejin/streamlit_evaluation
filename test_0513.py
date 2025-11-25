@@ -6,6 +6,8 @@ import os
 import pandas as pd
 from openai import OpenAI
 import traceback  # 오류 추적용
+import base64  # <--- [추가 1] 필수 라이브러리
+
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -32,6 +34,10 @@ if not OPENAI_API_KEY:
     st.error("OpenAI API 키가 설정되지 않았습니다. Streamlit Cloud의 Secrets에서 'OPENAI_API_KEY'를 설정해주세요.")
     st.stop()
     
+# [추가 2] 이미지를 Base64로 변환하는 함수
+def encode_image(image_file):
+    return base64.b64encode(image_file.read()).decode('utf-8')
+    
 # 학생별 최대 API 호출 횟수 설정
 MAX_API_CALLS_PER_STUDENT = 50  # 학생별 최대 API 호출 횟수
 
@@ -39,51 +45,66 @@ MAX_API_CALLS_PER_STUDENT = 50  # 학생별 최대 API 호출 횟수
 if "student_api_calls" not in st.session_state:
     st.session_state.student_api_calls = {}
 
-# GPT API 호출 함수 (모델 선택 가능)
+# [수정] GPT API 호출 함수 (멀티모달 지원)
 def get_gpt_response(messages, use_gpt4=False):
     student_id = st.session_state.student_id
     
-    # 학생별 API 호출 횟수 초기화
+    # 학생별 API 호출 횟수 초기화 및 제한 확인 (기존 로직 유지)
     if student_id not in st.session_state.student_api_calls:
         st.session_state.student_api_calls[student_id] = 0
     
-    # API 호출 횟수 제한 확인
     if st.session_state.student_api_calls[student_id] >= MAX_API_CALLS_PER_STUDENT:
         return "API 호출 횟수가 제한에 도달했습니다. 선생님에게 문의해주세요."
     
-    # 간단한 캐싱을 위한 키 생성 (사용자 메시지만 고려)
-    cache_key = str([msg for msg in messages if msg["role"] == "user"]) + str(use_gpt4)
-    
-    # 캐시된 응답이 있는지 확인
+    # 캐싱 키 생성
+    cache_key = str([msg["content"] for msg in messages if msg["role"] == "user"]) + str(use_gpt4)
     if cache_key in st.session_state.response_cache:
         return st.session_state.response_cache[cache_key]
     
     try:
-        # API 호출 카운터 증가
         st.session_state.api_call_count += 1
         st.session_state.student_api_calls[student_id] += 1
         
-        # 모델 선택
         model = FEEDBACK_MODEL if use_gpt4 else DEFAULT_MODEL
         
+        # [핵심 변경] API로 보낼 메시지 포맷 재구성 (이미지 처리)
+        api_messages = []
+        for msg in messages:
+            # 이미지가 포함된 메시지인지 확인 ('image_data' 키 유무)
+            if "image_data" in msg and msg["image_data"]:
+                content_payload = [
+                    {"type": "text", "text": msg["content"]},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{msg['image_data']}"}
+                    }
+                ]
+                api_messages.append({"role": msg["role"], "content": content_payload})
+            else:
+                # 텍스트만 있는 경우
+                api_messages.append({"role": msg["role"], "content": msg["content"]})
+
         api_params = {
             "model": model,
-            "messages": messages
+            "messages": api_messages
         }
-        # o1 모델이 아닌 경우에만 temperature 추가
+        
         if not model.startswith("o1"):
             api_params["temperature"] = 0.7
-            response = client.chat.completions.create(**api_params)
-        
+            
+        response = client.chat.completions.create(**api_params)
         response_text = response.choices[0].message.content
         
-        # 응답 캐싱
         st.session_state.response_cache[cache_key] = response_text
-        
         return response_text
+
     except Exception as e:
         st.error(f"GPT 응답 생성 중 오류가 발생했습니다: {str(e)}")
+        # 에러 상세 내용을 출력하여 디버깅 도움 (운영 시에는 주석 처리 가능)
+        print(f"Error details: {traceback.format_exc()}") 
         return "죄송합니다, 응답을 생성하는 중에 오류가 발생했습니다. 다시 시도해 주세요."
+
+    
 # GPT를 활용한 메시지 관련성 분석 함수들 (get_gpt_response 함수 아래에 추가)
 
 def analyze_message_relevance(message_content):
@@ -603,47 +624,70 @@ elif st.session_state.student_info_submitted:
             st.session_state.feedback_mode = False
             st.rerun()
 
-    # 일반 채팅 모드
+# 일반 채팅 모드
     else:
         # 메시지 기록 표시
         for msg in st.session_state.messages:
-            if msg["role"] != "system":  # 시스템 메시지는 표시하지 않음
-                if msg["role"] == "assistant":
-                    with st.chat_message("assistant"):
-                        st.markdown(msg["content"])
-                elif msg["role"] == "user":
-                    with st.chat_message("user"):
-                        st.markdown(msg["content"])
+            if msg["role"] != "system":
+                # 역할에 따른 메시지 표시
+                with st.chat_message(msg["role"]):
+                    # 1. 이미지가 있으면 먼저 표시
+                    if "image_data" in msg and msg["image_data"]:
+                        # base64를 다시 이미지로 보여주기 위해 디코딩 (또는 저장된 방식에 따라 처리)
+                        # 여기서는 간단히 표시만 함. 실제로는 base64 스트링을 이미지로 렌더링
+                        st.image(base64.b64decode(msg["image_data"]), caption="업로드한 이미지", width=300)
+                    
+                    # 2. 텍스트 표시
+                    st.markdown(msg["content"])
+
+        # [추가 3] 이미지 업로드 기능 (채팅 입력창 위에 배치)
+        with st.expander("📷 스토리보드 스케치/이미지 업로드", expanded=False):
+            uploaded_file = st.file_uploader("이미지를 업로드하고 아래 채팅창에 질문을 입력하세요.", type=['png', 'jpg', 'jpeg'])
 
         # 사용자 입력 받기
         user_input = st.chat_input("스토리보드에 대해 질문하거나 아이디어를 입력하세요...")
 
         if user_input:
-            # 사용자 메시지 추가 및 표시
-            st.session_state.messages.append({"role": "user", "content": user_input})
+            # 이미지 처리
+            image_data = None
+            if uploaded_file:
+                image_data = encode_image(uploaded_file)
+                # 현재 메시지 표시 영역에 이미지 미리보기
+                with st.chat_message("user"):
+                    st.image(uploaded_file, caption="업로드 중...", width=300)
+
+            # 사용자 메시지 구조 생성
+            user_message_obj = {
+                "role": "user", 
+                "content": user_input,
+                # 이미지가 있을 경우에만 image_data 필드 추가
+                "image_data": image_data if image_data else None 
+            }
+
+            # 세션에 추가 및 화면 표시 (텍스트)
+            st.session_state.messages.append(user_message_obj)
             with st.chat_message("user"):
                 st.markdown(user_input)
 
-            # 입력 시간 기록
+            # 입력 시간 기록 및 저장
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            # 대화 로그 저장
+            
+            # [중요] 저장 함수(save_data)는 기존 형식을 유지하기 위해 image_data는 제외하고 저장하거나,
+            # content에 텍스트만 남겨두어 관리자 대시보드 오류를 방지합니다.
             chat_log = {
                 "session_id": st.session_state.session_id,
                 "student_name": st.session_state.student_name,
                 "student_id": st.session_state.student_id,
                 "timestamp": current_time,
                 "type": "user_message",
-                "content": user_input
+                "content": user_input  # 텍스트만 저장 (대시보드 호환성 유지)
             }
-
-            # 데이터 저장
             save_data(chat_log)
 
-            # GPT 응답 생성 (기본 모델 사용)
-            with st.spinner("응답을 생성 중입니다..."):
-                messages_for_api = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-                response = get_gpt_response(messages_for_api, use_gpt4=False)
+            # GPT 응답 생성
+            with st.spinner("이미지와 내용을 분석 중입니다..." if image_data else "응답을 생성 중입니다..."):
+                # 전체 메시지 히스토리를 넘기되, get_gpt_response 내부에서 이미지 처리를 수행함
+                response = get_gpt_response(st.session_state.messages, use_gpt4=False)
 
             # 응답 메시지 추가 및 표시
             st.session_state.messages.append({"role": "assistant", "content": response})
@@ -659,9 +703,11 @@ elif st.session_state.student_info_submitted:
                 "type": "assistant_message",
                 "content": response
             }
-
-            # 데이터 저장
             save_data(response_log)
+            
+            # 이미지를 업로드했다면 다음 대화를 위해 리로드 (업로더 초기화용, 선택사항)
+            if uploaded_file:
+                st.rerun()
 
 # 관리자 모드 (숨겨진 기능) - URL에 ?admin=true 추가 시 접근 가능
 if st.query_params.get("admin", "false") == "true":
@@ -997,3 +1043,4 @@ if st.query_params.get("admin", "false") == "true":
             )
             
             st.success("데이터가 성공적으로 압축되었습니다. 다운로드 버튼을 클릭하여 백업 파일을 저장하세요.")
+
