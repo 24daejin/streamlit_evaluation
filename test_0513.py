@@ -37,7 +37,67 @@ if not OPENAI_API_KEY:
 # [추가 2] 이미지를 Base64로 변환하는 함수
 def encode_image(image_file):
     return base64.b64encode(image_file.read()).decode('utf-8')
+# [추가] 대화 내용을 바탕으로 스토리보드 구조 추출 함수
+def extract_storyboard_structure(messages):
+    # 학생과 AI의 대화만 텍스트로 변환
+    conversation_text = ""
+    for msg in messages:
+        role = "학생" if msg["role"] == "user" else "AI 조수"
+        # 이미지 데이터 등은 제외하고 텍스트만 처리
+        content = msg["content"]
+        if isinstance(content, list): # 멀티모달 메시지 처리
+             content = " ".join([c["text"] for c in content if c["type"] == "text"])
+        conversation_text += f"{role}: {content}\n"
+
+    prompt = f"""
+    아래 대화는 기후 위기 스토리보드 수행평가를 위한 학생과 AI의 대화입니다.
+    이 대화 내용을 바탕으로 학생이 구상하고 있는 스토리보드(4컷 만화 또는 영상 구성안)를 정리해주세요.
     
+    출력 형식은 반드시 아래 JSON 포맷을 지켜주세요:
+    {{
+        "title": "추론된 스토리보드 제목",
+        "theme": "핵심 주제 (예: 맹그로브 숲의 파괴)",
+        "scenes": [
+            {{
+                "scene_num": 1,
+                "visual": "화면 구성 및 그림 설명 (구체적으로)",
+                "audio": "대사 또는 내레이션",
+                "time": "예상 시간"
+            }}
+        ],
+        "overall_summary": "전체 줄거리 요약 (한 문단)"
+    }}
+    
+    대화 내용:
+    {conversation_text}
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o", # 복잡한 추론이므로 gpt-4o 권장
+            messages=[{"role": "system", "content": "You are a helper summarizing storyboard plans."},
+                      {"role": "user", "content": prompt}],
+            response_format={"type": "json_object"} # JSON 모드 활성화
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        return None
+
+# [추가] DALL-E 3로 장면 이미지 생성 함수
+def generate_scene_image(image_prompt):
+    try:
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=f"A storyboard sketch style illustration. {image_prompt}", # 스타일 지정
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        return response.data[0].url
+    except Exception as e:
+        st.error(f"이미지 생성 실패: {e}")
+        return None
+        
 # 학생별 최대 API 호출 횟수 설정
 MAX_API_CALLS_PER_STUDENT = 50  # 학생별 최대 API 호출 횟수
 
@@ -799,6 +859,59 @@ if st.query_params.get("admin", "false") == "true":
                 st.info("아직 등록된 학생이 없습니다.")
         except Exception as e:
             st.error(f"대화 내용 로드 중 오류: {str(e)}")
+if os.path.exists(conversation_file):
+                    with open(conversation_file, 'r', encoding='utf-8') as f:
+                        conversation = json.load(f)
+
+                    # --- [기존 대화 내용 표시 코드 (그대로 유지)] ---
+                    with st.expander("💬 대화 내용 전체 보기", expanded=True):
+                        for msg in conversation["messages"]:
+                             # ... (기존 메시지 출력 코드) ...
+                             pass 
+                    
+                    # --- [새로 추가하는 부분: AI 스토리보드 생성기] ---
+                    st.markdown("---")
+                    st.subheader("🎬 AI 스토리보드 분석기")
+                    st.info("학생과의 대화 내용을 바탕으로 스토리보드 구성안을 자동으로 추출합니다.")
+
+                    if st.button("스토리보드 구조 추출하기", key=f"btn_{selected_id}"):
+                        with st.spinner("대화 내용을 분석하여 스토리보드를 재구성 중입니다..."):
+                            storyboard_data = extract_storyboard_structure(conversation["messages"])
+                        
+                        if storyboard_data:
+                            # 1. 기본 정보 표시
+                            st.success("분석 완료!")
+                            col1, col2 = st.columns([1, 3])
+                            with col1:
+                                st.metric("제목", storyboard_data.get("title", "제목 없음"))
+                            with col2:
+                                st.info(f"**주제:** {storyboard_data.get('theme', '주제 미정')}")
+                            
+                            st.markdown(f"**📝 전체 요약:** {storyboard_data.get('overall_summary', '')}")
+                            
+                            # 2. 장면별 테이블 표시
+                            scenes = storyboard_data.get("scenes", [])
+                            if scenes:
+                                st.table(pd.DataFrame(scenes).set_index("scene_num"))
+                                
+                                # 3. (선택 기능) 주요 장면 시각화
+                                st.markdown("### 🎨 주요 장면 시각화 (DALL-E 3)")
+                                st.caption("가장 첫 번째 장면을 예시로 생성합니다. (비용 발생 주의)")
+                                
+                                if st.button("첫 장면 이미지 생성하기"):
+                                    first_scene = scenes[0]
+                                    visual_desc = first_scene.get("visual", "")
+                                    if visual_desc:
+                                        with st.spinner("이미지를 생성 중입니다..."):
+                                            image_url = generate_scene_image(f"{storyboard_data['theme']}. {visual_desc}")
+                                            if image_url:
+                                                st.image(image_url, caption=f"Scene 1: {visual_desc}")
+                                    else:
+                                        st.warning("장면 설명이 부족하여 이미지를 생성할 수 없습니다.")
+                        else:
+                            st.error("스토리보드 내용을 추출하지 못했습니다. 대화 내용이 충분한지 확인해주세요.")
+                    
+                    # ---------------------------------------------
 
     with admin_tab3:
         st.subheader("데이터 분석")
@@ -1043,4 +1156,5 @@ if st.query_params.get("admin", "false") == "true":
             )
             
             st.success("데이터가 성공적으로 압축되었습니다. 다운로드 버튼을 클릭하여 백업 파일을 저장하세요.")
+
 
