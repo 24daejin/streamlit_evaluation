@@ -840,48 +840,61 @@ if st.query_params.get("admin", "false") == "true":
                                 st.info(f"**학생 ({msg['timestamp']}):**\n{msg['content']}")
                             elif msg["role"] == "assistant":
                                 st.success(f"**AI ({msg['timestamp']}):**\n{msg['content']}")
+                                
+                    # --- [수정된 부분: AI 스토리보드 분석기 (세션 상태 유지 적용)] ---
                     st.markdown("---")
                     st.subheader("🎬 AI 스토리보드 분석기")
                     st.info("학생과의 대화 내용을 바탕으로 스토리보드 구성안을 자동으로 추출합니다.")
 
-                    if st.button("스토리보드 구조 추출하기", key=f"btn_{selected_id}"):
+                    # 학생별 고유 세션 키 생성
+                    analysis_key = f"analysis_{selected_id}"
+
+                    # 1. 추출 버튼
+                    if st.button("스토리보드 구조 추출하기", key=f"btn_extract_{selected_id}"):
                         with st.spinner("대화 내용을 분석하여 스토리보드를 재구성 중입니다..."):
-                            storyboard_data = extract_storyboard_structure(conversation["messages"])
+                            # 분석 결과를 세션 상태에 저장
+                            st.session_state[analysis_key] = extract_storyboard_structure(conversation["messages"])
+
+                    # 2. 저장된 분석 결과가 있을 때만 화면 표시 (버튼 눌러도 사라지지 않음)
+                    if analysis_key in st.session_state and st.session_state[analysis_key]:
+                        storyboard_data = st.session_state[analysis_key]
                         
-                        if storyboard_data:
-                            # 1. 기본 정보 표시
-                            st.success("분석 완료!")
-                            col1, col2 = st.columns([1, 3])
-                            with col1:
-                                st.metric("제목", storyboard_data.get("title", "제목 없음"))
-                            with col2:
-                                st.info(f"**주제:** {storyboard_data.get('theme', '주제 미정')}")
+                        # (1) 기본 정보 표시
+                        st.success("분석 완료!")
+                        col1, col2 = st.columns([1, 3])
+                        with col1:
+                            st.metric("제목", storyboard_data.get("title", "제목 없음"))
+                        with col2:
+                            st.info(f"**주제:** {storyboard_data.get('theme', '주제 미정')}")
+                        
+                        st.markdown(f"**📝 전체 요약:** {storyboard_data.get('overall_summary', '')}")
+                        
+                        # (2) 장면별 테이블 표시
+                        scenes = storyboard_data.get("scenes", [])
+                        if scenes:
+                            st.table(pd.DataFrame(scenes).set_index("scene_num"))
                             
-                            st.markdown(f"**📝 전체 요약:** {storyboard_data.get('overall_summary', '')}")
+                            # (3) 주요 장면 시각화 (DALL-E 3)
+                            st.markdown("### 🎨 주요 장면 시각화 (DALL-E 3)")
+                            st.caption("가장 첫 번째 장면을 예시로 생성합니다. (비용 발생 주의)")
                             
-                            # 2. 장면별 테이블 표시
-                            scenes = storyboard_data.get("scenes", [])
-                            if scenes:
-                                st.table(pd.DataFrame(scenes).set_index("scene_num"))
+                            # 이미지 생성 버튼
+                            if st.button("첫 장면 이미지 생성하기", key=f"btn_img_{selected_id}"):
+                                first_scene = scenes[0]
+                                visual_desc = first_scene.get("visual", "")
                                 
-                                # 3. (선택 기능) 주요 장면 시각화
-                                st.markdown("### 🎨 주요 장면 시각화 (DALL-E 3)")
-                                st.caption("가장 첫 번째 장면을 예시로 생성합니다. (비용 발생 주의)")
-                                
-                                if st.button("첫 장면 이미지 생성하기"):
-                                    first_scene = scenes[0]
-                                    visual_desc = first_scene.get("visual", "")
-                                    if visual_desc:
-                                        with st.spinner("이미지를 생성 중입니다..."):
-                                            image_url = generate_scene_image(f"{storyboard_data['theme']}. {visual_desc}")
-                                            if image_url:
-                                                st.image(image_url, caption=f"Scene 1: {visual_desc}")
-                                    else:
-                                        st.warning("장면 설명이 부족하여 이미지를 생성할 수 없습니다.")
-                        else:
-                            st.error("스토리보드 내용을 추출하지 못했습니다. 대화 내용이 충분한지 확인해주세요.")
-                    
-                    # ---------------------------------------------
+                                if visual_desc:
+                                    with st.spinner("DALL-E 3가 이미지를 그리고 있습니다..."):
+                                        image_url = generate_scene_image(f"{storyboard_data['theme']}. {visual_desc}")
+                                        
+                                        if image_url:
+                                            # 이미지 생성 결과도 세션에 저장 (선택 사항)
+                                            st.image(image_url, caption=f"Scene 1: {visual_desc}")
+                                            st.success("이미지 생성 완료!")
+                                else:
+                                    st.warning("장면 설명이 부족하여 이미지를 생성할 수 없습니다.")
+                    elif analysis_key in st.session_state and st.session_state[analysis_key] is None:
+                        st.error("스토리보드 내용을 추출하지 못했습니다. 대화 내용이 충분한지 확인해주세요.")
 
                     # 피드백 표시
                     if "feedback" in conversation and conversation["feedback"]:
@@ -1150,6 +1163,7 @@ if st.query_params.get("admin", "false") == "true":
             )
             
             st.success("데이터가 성공적으로 압축되었습니다. 다운로드 버튼을 클릭하여 백업 파일을 저장하세요.")
+
 
 
 
