@@ -831,45 +831,15 @@ if st.query_params.get("admin", "false") == "true":
                 if os.path.exists(conversation_file):
                     with open(conversation_file, 'r', encoding='utf-8') as f:
                         conversation = json.load(f)
+                        
+                    with st.expander("💬 대화 내용 전체 보기", expanded=True):
 
                     # 대화 내용 표시
-                    for msg in conversation["messages"]:
-                        if msg["role"] == "user":
-                            st.info(f"**학생 ({msg['timestamp']}):**\n{msg['content']}")
-                        elif msg["role"] == "assistant":
-                            st.success(f"**AI ({msg['timestamp']}):**\n{msg['content']}")
-
-                    # 피드백 표시
-                    if "feedback" in conversation and conversation["feedback"]:
-                        st.subheader("피드백 기록")
-                        for feedback in conversation["feedback"]:
-                            st.warning(f"**피드백 ({feedback['timestamp']}):**\n{feedback['content']}")
-
-                    # 다운로드 버튼
-                    conversation_json = json.dumps(conversation, ensure_ascii=False, indent=2)
-                    st.download_button(
-                        label="대화 내용 다운로드 (JSON)",
-                        data=conversation_json,
-                        file_name=f"{selected_id}_{selected_name}_대화.json",
-                        mime="application/json"
-                    )
-                else:
-                    st.error(f"대화 파일을 찾을 수 없습니다: {conversation_file}")
-            else:
-                st.info("아직 등록된 학생이 없습니다.")
-        except Exception as e:
-            st.error(f"대화 내용 로드 중 오류: {str(e)}")
-if os.path.exists(conversation_file):
-                    with open(conversation_file, 'r', encoding='utf-8') as f:
-                        conversation = json.load(f)
-
-                    # --- [기존 대화 내용 표시 코드 (그대로 유지)] ---
-                    with st.expander("💬 대화 내용 전체 보기", expanded=True):
                         for msg in conversation["messages"]:
-                             # ... (기존 메시지 출력 코드) ...
-                             pass 
-                    
-                    # --- [새로 추가하는 부분: AI 스토리보드 생성기] ---
+                            if msg["role"] == "user":
+                                st.info(f"**학생 ({msg['timestamp']}):**\n{msg['content']}")
+                            elif msg["role"] == "assistant":
+                                st.success(f"**AI ({msg['timestamp']}):**\n{msg['content']}")
                     st.markdown("---")
                     st.subheader("🎬 AI 스토리보드 분석기")
                     st.info("학생과의 대화 내용을 바탕으로 스토리보드 구성안을 자동으로 추출합니다.")
@@ -912,6 +882,30 @@ if os.path.exists(conversation_file):
                             st.error("스토리보드 내용을 추출하지 못했습니다. 대화 내용이 충분한지 확인해주세요.")
                     
                     # ---------------------------------------------
+
+                    # 피드백 표시
+                    if "feedback" in conversation and conversation["feedback"]:
+                        st.subheader("피드백 기록")
+                        for feedback in conversation["feedback"]:
+                            st.warning(f"**피드백 ({feedback['timestamp']}):**\n{feedback['content']}")
+
+                    # 다운로드 버튼
+                    conversation_json = json.dumps(conversation, ensure_ascii=False, indent=2)
+                    st.download_button(
+                        label="대화 내용 다운로드 (JSON)",
+                        data=conversation_json,
+                        file_name=f"{selected_id}_{selected_name}_대화.json",
+                        mime="application/json"
+                    )
+                else:
+                    st.error(f"대화 파일을 찾을 수 없습니다: {conversation_file}")
+            else:
+                st.info("아직 등록된 학생이 없습니다.")
+        except Exception as e:
+            st.error(f"대화 내용 로드 중 오류: {str(e)}")
+            
+        
+                    
 
     with admin_tab3:
         st.subheader("데이터 분석")
@@ -1156,5 +1150,6 @@ if os.path.exists(conversation_file):
             )
             
             st.success("데이터가 성공적으로 압축되었습니다. 다운로드 버튼을 클릭하여 백업 파일을 저장하세요.")
+
 
 
