@@ -196,7 +196,7 @@ def analyze_message_relevance(message_content):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             messages=[{"role": "user", "content": analysis_prompt}],
             temperature=0.1,  # 일관성을 위해 낮은 temperature
         )
@@ -1163,6 +1163,7 @@ if st.query_params.get("admin", "false") == "true":
             )
             
             st.success("데이터가 성공적으로 압축되었습니다. 다운로드 버튼을 클릭하여 백업 파일을 저장하세요.")
+
 
 
 
